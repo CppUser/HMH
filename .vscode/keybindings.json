@@ -1,0 +1,7 @@
+[
+    {
+        "key": "ctrl+shift+d",
+        "command": "debug.action.openDisassemblyView",
+        "when": "debugState == 'stopped'"
+    }
+]

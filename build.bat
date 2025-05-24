@@ -22,7 +22,7 @@ set compilerFlags=-g -Wall -Werror -std=c++23
 IF "%config%"=="release" set compilerFlags=-O2 -Wall -Werror -std=c++23
 
 set includeFlags=-Isrc -Isrc/public 
-set linkerFlags=-luser32 
+set linkerFlags=-luser32  -lgdi32
 set defines=-D_DEBUG -D_CRT_SECURE_NO_WARNINGS
 IF "%config%"=="release" set defines=-DRELEASE -D_CRT_SECURE_NO_WARNINGS
 

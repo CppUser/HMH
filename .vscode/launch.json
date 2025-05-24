@@ -1,7 +1,7 @@
 {
-    "configurations": [
+   "configurations": [
         {
-            "name": "Launch Debug",
+            "name": "Launch Debug (Enhanced)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/debug/game.exe",
@@ -22,32 +22,24 @@
                     "description": "Set Disassembly Flavor to Intel",
                     "text": "-gdb-set disassembly-flavor intel",
                     "ignoreFailures": true
-                }
-            ],
-            "preLaunchTask": "Build Debug"
-        },
-        {
-            "name": "Launch Release",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/bin/release/game.exe",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": true,
-            "MIMode": "gdb",
-            "miDebuggerPath": "C:/msys64/ucrt64/bin/gdb.exe",
-            "setupCommands": [
+                },
                 {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
+                    "description": "Show disassembly in mixed mode",
+                    "text": "-gdb-set print asm-demangle on",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Enable instruction stepping",
+                    "text": "-gdb-set step-mode on",
                     "ignoreFailures": true
                 }
             ],
-            "preLaunchTask": "Build Release"
+            "preLaunchTask": "Build Debug",
+            "logging": {
+                "engineLogging": false,
+                "trace": false,
+                "traceResponse": false
+            }
         }
-    
-    ],
-    "version": "0.2.0"
+    ]
 }

@@ -135,5 +135,9 @@
     "search.exclude": {
         "**/build":true
         /*add more folders with assets to avoid search */
-    }
+    },
+    "debug.showInlineBreakpointCandidates": true,
+    "debug.showBreakpointsInOverviewRuler": true,
+    "debug.openDebugConsole": "openOnDebugBreak",
+    "debug.disassemblyView.showSourceCode": true
 }
