@@ -1,6 +1,7 @@
 #include <Windows.h>
 #include <string>
 #include <cstdint>
+#include <iostream>
 
 #define global static
 #define local static
@@ -146,9 +147,22 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
 }
 
 
+internal void TestCrash()
+{
+    int* p = nullptr;
+    *p = 42; // Intentional segfault
+}
+
+
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 
+    SetErrorMode(SEM_NOGPFAULTERRORBOX);
+
+    TestCrash();
+
+    // uint8_t BigMemoryBlock[2 * 1024 * 1024] = {0};
+    //std::cout<<"BigMemoryBlock size: " << sizeof(BigMemoryBlock);
     //Initialize the back buffer
      ResizeDIBSection(&backBuffer,800, 600);
 

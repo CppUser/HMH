@@ -32,6 +32,36 @@
                     "description": "Enable instruction stepping",
                     "text": "-gdb-set step-mode on",
                     "ignoreFailures": true
+                },
+                {
+                    "description": "Enable verbose crash info",
+                    "text": "-gdb-set print stack-arguments all",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Enable full backtrace",
+                    "text": "-gdb-set backtrace full",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Print source lines in backtrace",
+                    "text": "-gdb-set print frame-arguments all",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Stop on segmentation fault",
+                    "text": "handle SIGSEGV stop print",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Stop on abort",
+                    "text": "handle SIGABRT stop print",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Enable memory debugging",
+                    "text": "-gdb-set environment MALLOC_CHECK_=2",
+                    "ignoreFailures": true
                 }
             ],
             "preLaunchTask": "Build Debug",
