@@ -8,69 +8,99 @@
 
 global bool running = true;
 
-global BITMAPINFO bitmapInfo;
-global void* bitmapData = nullptr;
-global int bitmapWidth = 0;
-global int bitmapHeight = 0;
 
-internal void RenderGradiant(int xOffset,int yOffset)
+struct Dimensions
 {
-    int width = bitmapWidth;
-    int height = bitmapHeight;
+    int width;
+    int height;
+};
 
-    int Pitch = width * 4; 
-    uint8_t* row = (uint8_t*)bitmapData;
-    for (int y = 0; y < height; ++y)
+//Helper function to get window dimensions
+internal Dimensions GetWindowDimensions(HWND hwnd)
+{
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    int width = rect.right - rect.left; 
+    int height = rect.bottom - rect.top;
+    return {width, height};
+}
+
+
+struct OffscreenBuffer
+{
+    BITMAPINFO info;
+    void* data;
+    int width,height;
+    int bpp{4};
+    int pitch{0};
+};
+global OffscreenBuffer backBuffer;
+
+
+
+
+internal void RenderGradiant(OffscreenBuffer buffer,int xOffset,int yOffset)
+{
+   
+    uint8_t* row = (uint8_t*)buffer.data;
+    for(int y = 0; y < buffer.height; ++y)
     {
         uint32_t* pixel = (uint32_t*)row;
-        for (int x = 0; x < width; ++x)
+        for(int x = 0; x < buffer.width; ++x)
         {
             uint8_t red = (x + xOffset) % 256;
             uint8_t green = (y + yOffset) % 256;
-            uint8_t blue = (x + y) % 256;
-            *pixel++ = (red << 16) | (green << 8) | blue; // BGRA format
+            uint8_t blue = (x + yOffset) % 256;
+            *pixel++ = (red << 16) | (green << 8) | blue;
         }
-        row += Pitch;
+        row += buffer.pitch;
     }
 }
 
-internal void ResizeDIBSection(int width, int height)
+internal void ResizeDIBSection(OffscreenBuffer* buffer,int width, int height)
 {
 
-    if (bitmapData)
+    if (buffer->data)
     {
-        VirtualFree(bitmapData, 0, MEM_RELEASE);
+        VirtualFree(buffer->data, 0, MEM_RELEASE);
     }
 
-    bitmapWidth = width;
-    bitmapHeight = height;
+    buffer->width = width;
+    buffer->height = height;
+    
 
-    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmapInfo.bmiHeader.biWidth = bitmapWidth;
-    bitmapInfo.bmiHeader.biHeight = -bitmapHeight; // negative to flip the image
-    bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+    buffer->info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    buffer->info.bmiHeader.biWidth = buffer->width;
+    buffer->info.bmiHeader.biHeight = -buffer->height; // negative to flip the image
+    buffer->info.bmiHeader.biPlanes = 1;
+    buffer->info.bmiHeader.biBitCount = 32;
+    buffer->info.bmiHeader.biCompression = BI_RGB;
 
-    int bitmapDataSize = (bitmapWidth * bitmapHeight) * 4; // 4 bytes per pixel (RGBA)
-    bitmapData = VirtualAlloc(nullptr, bitmapDataSize,
+    int bitmapDataSize = (buffer->width * buffer->height) * buffer->bpp; // 4 bytes per pixel (RGBA)
+    buffer->data = VirtualAlloc(nullptr, bitmapDataSize,
                               MEM_COMMIT | MEM_RESERVE,
                               PAGE_READWRITE);
-    if (!bitmapData)
+    if (!buffer->data)
     {
         OutputDebugStringA("Failed to allocate bitmap data\n");
         return;
     }
+
+    buffer->pitch = width * buffer->bpp;
 }
 
-internal void Win32UpdateWindow(HDC hdc,RECT *windowRect, int x, int y, int width, int height)
+internal void DrawBuffer(HDC hdc,int windowWidth,int windowHeight,OffscreenBuffer buffer, int x, int y)
 {
-   
+
+    //Fixing aspect ration since we call resizeDibSection in begining with predefined width and height
+    //TODO:: Fix aspec ration
+
+
     StretchDIBits(
         hdc, 
-        0, 0, width, height,
-        0, 0, bitmapWidth, bitmapHeight,
-        bitmapData, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
+        0, 0, windowWidth, windowHeight,    // Destination rectangle
+        0, 0, buffer.width, buffer.height,  // Source rectangle  
+        buffer.data, &buffer.info, DIB_RGB_COLORS, SRCCOPY);
   
 }
 
@@ -92,11 +122,7 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
             break;
         case WM_SIZE:{
             //Creating a DIB section
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            int width = rect.right - rect.left; 
-            int height = rect.bottom - rect.top;
-            ResizeDIBSection(width, height);
+           
                 
         }break;
         case WM_PAINT:
@@ -107,12 +133,9 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
 
             int x = ps.rcPaint.left;
             int y = ps.rcPaint.top;
-            int width = ps.rcPaint.right - ps.rcPaint.left;
-            int height = ps.rcPaint.bottom - ps.rcPaint.top;
 
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            Win32UpdateWindow(hdc,&rect ,x,y,width,height);
+            auto dimensions = GetWindowDimensions(hwnd);
+            DrawBuffer(hdc,dimensions.width,dimensions.height,backBuffer,x,y);
 
             EndPaint(hwnd, &ps);
             
@@ -126,15 +149,15 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 
+    //Initialize the back buffer
+     ResizeDIBSection(&backBuffer,800, 600);
+
     WNDCLASSA wc{};
     wc.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = Wndproc;
     wc.cbClsExtra = 0;
     wc.cbWndExtra = 0;
     wc.hInstance = hInstance;
-    wc.hIcon = LoadIconA(nullptr, IDI_APPLICATION);
-    //wc.hCursor = LoadCursorA(nullptr, IDC_ARROW),
-    //wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1), //own drawing will be happening(no need brush)
     wc.lpszMenuName = nullptr;
     wc.lpszClassName = "hmhWindowClass";
 
@@ -174,13 +197,11 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
                 running = false;
         }
 
-        RenderGradiant(xOffset, 0);
+        RenderGradiant(backBuffer,xOffset, 0);
         HDC hdc = GetDC(hwnd);
-        RECT rect;
-        GetClientRect(hwnd, &rect);
-        int width = rect.right - rect.left;
-        int height = rect.bottom - rect.top;
-        Win32UpdateWindow(hdc, &rect, 0, 0, width, height);
+        auto dimensions = GetWindowDimensions(hwnd);
+
+        DrawBuffer(hdc, dimensions.width,dimensions.height,backBuffer, 0, 0);
         ReleaseDC(hwnd, hdc);
         ++xOffset;
        
