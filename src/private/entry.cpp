@@ -38,9 +38,13 @@ struct OffscreenBuffer
 global OffscreenBuffer backBuffer;
 
 
+//NOTE: on previous version i have % 256
+//modulo operator can be slightly slower than bitwise AND for powers of two.
+// Since 256 is a power of two, val % 256 is equivalent to val & 255 (or val & 0xFF).
+//Casting to uint8_t will naturally take the lower 8 bits, which is the same as % 256 
+//for positive results of the sum. This is usually handled efficiently by the compiler anyway
 
-
-internal void RenderGradiant(OffscreenBuffer buffer,int xOffset,int yOffset)
+internal void RenderGradiant(OffscreenBuffer& buffer,int xOffset,int yOffset)
 {
    
     uint8_t* row = (uint8_t*)buffer.data;
@@ -49,15 +53,16 @@ internal void RenderGradiant(OffscreenBuffer buffer,int xOffset,int yOffset)
         uint32_t* pixel = (uint32_t*)row;
         for(int x = 0; x < buffer.width; ++x)
         {
-            uint8_t red = (x + xOffset) % 256;
-            uint8_t green = (y + yOffset) % 256;
-            uint8_t blue = (x + yOffset) % 256;
+            uint8_t red = (uint8_t)(x + xOffset);
+            uint8_t green = (uint8_t)(y + yOffset);
+            uint8_t blue = (uint8_t)(y + yOffset);
             *pixel++ = (red << 16) | (green << 8) | blue;
         }
         row += buffer.pitch;
     }
 }
 
+//TODO:internal bool  ResizeDIBSection(OffscreenBuffer* buffer,int width, int height) //would be better choice
 internal void ResizeDIBSection(OffscreenBuffer* buffer,int width, int height)
 {
 
@@ -84,13 +89,35 @@ internal void ResizeDIBSection(OffscreenBuffer* buffer,int width, int height)
     if (!buffer->data)
     {
         OutputDebugStringA("Failed to allocate bitmap data\n");
+        //TODO: CRITICAL ISSUE: What happens if VirtualAlloc fails?
+        // The function returns, but buffer->data is nullptr.
+        // Subsequent calls to RenderGradiant or DrawBuffer will try to dereference a null pointer,
+        // leading to a crash.
         return;
+
+
+        //TODO: Handle this case properly
+        /*
+        If VirtualAlloc fails, you output a debug string and return. However, buffer->data remains nullptr.
+         The backBuffer (which is likely the buffer being passed here) will have nullptr for its data. 
+         The main loop will continue, call RenderGradiant which will try to write to nullptr, 
+         and then DrawBuffer will try to read from nullptr. This will cause a crash.
+        
+        */
+       //return false; // Indicate failure
     }
 
     buffer->pitch = width * buffer->bpp;
+    //return true;
+
+    // In WinMain:
+    // if (!ResizeDIBSection(&backBuffer, 800, 600)) {
+    //     MessageBoxA(nullptr, "Failed to initialize back buffer", "Error", MB_OK | MB_ICONERROR);
+    //     return -1; // or handle appropriately
+    // }
 }
 
-internal void DrawBuffer(HDC hdc,int windowWidth,int windowHeight,OffscreenBuffer buffer, int x, int y)
+internal void DrawBuffer(HDC hdc,int windowWidth,int windowHeight,OffscreenBuffer& buffer, int x, int y)
 {
 
     //Fixing aspect ration since we call resizeDibSection in begining with predefined width and height
@@ -147,24 +174,10 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
 }
 
 
-internal void TestCrash()
-{
-    int* p = nullptr;
-    *p = 42; // Intentional segfault
-}
-
-
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
-
-    SetErrorMode(SEM_NOGPFAULTERRORBOX);
-
-    TestCrash();
-
-    // uint8_t BigMemoryBlock[2 * 1024 * 1024] = {0};
-    //std::cout<<"BigMemoryBlock size: " << sizeof(BigMemoryBlock);
     //Initialize the back buffer
-     ResizeDIBSection(&backBuffer,800, 600);
+    ResizeDIBSection(&backBuffer,800, 600);
 
     WNDCLASSA wc{};
     wc.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
