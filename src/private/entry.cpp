@@ -10,6 +10,7 @@
 #define internal static
 
 global bool running = true;
+static LPDIRECTSOUNDBUFFER secondaryBuffer;
 
 #pragma region XInput stubs old style
 // #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE* pState)
@@ -179,12 +180,14 @@ auto InitDSound(HWND hwnd, int sampleRate, int channels, int bufferSize) -> bool
     secondaryBufferDesc.dwBufferBytes = bufferSize; // Size of the buffer in bytes
     secondaryBufferDesc.lpwfxFormat = &waveFormat; // Format of the buffer
 
-    LPDIRECTSOUNDBUFFER secondaryBuffer;
+    
     hr = directSound->CreateSoundBuffer(&secondaryBufferDesc, &secondaryBuffer, nullptr);
     if (FAILED(hr)) {
         OutputDebugStringA("Failed to create secondary sound buffer\n");
         return false;
     }
+
+
 
     return true;
     //TODO: start it playing sound
@@ -440,10 +443,18 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         return -1;
     }
 
-    InitDSound(hwnd, 44100, 2, 1024); // Initialize DirectSound with sample rate, channels, and buffer size
+   
 
     int xOffset = 0;
     int yOffset = 0;
+    int Hz = 256;
+    int SquareWavePeriod = 44100 / Hz; // Calculate the period of the square wave based on the sample rate
+    int BytesPerSample = sizeof(int16_t) * 2; // 16-bit stereo audio (2 channels)
+    uint32_t SampleIndex = 0; // Initialize sample index for audio playback
+
+    InitDSound(hwnd, 44100, 2, 44100*BytesPerSample); // Initialize DirectSound with sample rate, channels, and buffer size
+
+    secondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
     MSG msg{};
     while (running)
     {
@@ -538,6 +549,91 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         // XInputSetState(0, &vibration); // Reset vibration for controller 0
 
         RenderGradiant(backBuffer,xOffset, yOffset);
+
+        //NOTE: Direct sound output test
+        //Circular buffer output
+        if (secondaryBuffer)
+        {
+            DWORD PlayCursor, WriteCursor;
+            HRESULT hr = secondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor);
+            if (FAILED(hr))
+            {
+                OutputDebugStringA("Failed to get current position of secondary buffer\n");
+                continue; // Skip this iteration if we can't get the position
+            }
+
+            DWORD BytesToLock = SampleIndex * BytesPerSample % (44100 * BytesPerSample);
+            DWORD BytesToWrite;
+
+            if (BytesToLock > PlayCursor)
+            {
+                BytesToWrite = (44100 * BytesPerSample) - BytesToLock;
+                BytesToWrite += PlayCursor;
+            }
+            else
+            {
+                BytesToWrite = PlayCursor - BytesToLock;
+            }
+
+            void* Region1;
+            DWORD Region1Size;
+            void* Region2;
+            DWORD Region2Size;
+
+            hr = secondaryBuffer->Lock(BytesToLock, BytesToWrite,
+                                       &Region1, &Region1Size,
+                                       &Region2, &Region2Size,
+                                       0);
+            
+            if (SUCCEEDED(hr))
+            {
+                // Process Region 1
+                int16_t* pData1 = (int16_t*)Region1;
+                DWORD Region1SampleCount = Region1Size / BytesPerSample;
+
+                for (DWORD index = 0; index < Region1SampleCount; ++index)
+                {
+                    // Generate square wave: alternate between high and low every half period
+                    int16_t SampleValue = ((SampleIndex / (SquareWavePeriod / 2)) % 2) ? 16000 : -16000;
+                    *pData1++ = SampleValue; // Left channel
+                    *pData1++ = SampleValue; // Right channel
+                    SampleIndex++;
+                }
+
+                // Process Region 2 (if it exists)
+                if (Region2 && Region2Size > 0)
+                {
+                    int16_t* pData2 = (int16_t*)Region2;
+                    DWORD Region2SampleCount = Region2Size / BytesPerSample;
+
+                    for (DWORD index = 0; index < Region2SampleCount; ++index)
+                    {
+                        int16_t SampleValue = ((SampleIndex / (SquareWavePeriod / 2)) % 2) ? 16000 : -16000;
+                        *pData2++ = SampleValue; // Left channel
+                        *pData2++ = SampleValue; // Right channel
+                        SampleIndex++;
+                    }
+                }
+
+                // Unlock the buffer
+                secondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
+
+                // Start playing if not already playing
+                DWORD status;
+                if (SUCCEEDED(secondaryBuffer->GetStatus(&status)))
+                {
+                    if (!(status & DSBSTATUS_PLAYING))
+                    {
+                        
+                    }
+                }
+            }
+            else
+            {
+                OutputDebugStringA("Failed to lock DirectSound buffer\n");
+            }
+        }
+
         HDC hdc = GetDC(hwnd);
         auto dimensions = GetWindowDimensions(hwnd);
 
