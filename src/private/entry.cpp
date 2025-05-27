@@ -2,6 +2,8 @@
 #include <string>
 #include <cstdint>
 #include <iostream>
+#include <xinput.h>
+
 
 #define global static
 #define local static
@@ -9,6 +11,79 @@
 
 global bool running = true;
 
+#pragma region XInput stubs old style
+// #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE* pState)
+// typedef X_INPUT_GET_STATE(x_input_get_state);
+// X_INPUT_GET_STATE(XInputGetStateStub)
+// {
+//     return ERROR_DEVICE_NOT_CONNECTED;
+// };
+
+
+// #define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION* pVibration)
+// typedef X_INPUT_SET_STATE(x_input_set_state);
+// X_INPUT_SET_STATE(XInputSetStateStub)
+// {
+//     return ERROR_DEVICE_NOT_CONNECTED;
+// };
+
+// global x_input_get_state* XInputGetState_ = XInputGetStateStub; // Pointer to the XInputGetState function
+// global x_input_set_state* XInputSetState_ = XInputSetStateStub; // Pointer to the XInputSetState function
+// #define XInputGetState XInputGetState_
+// #define XInputSetState XInputSetState_
+
+// internal void LoadInputLibrary()
+// {
+//     HMODULE xinputModule = LoadLibraryA("xinput1_4.dll");
+//     if (xinputModule)
+//     {
+//         XInputGetState = (x_input_get_state*)GetProcAddress(xinputModule, "XInputGetState");
+//         XInputSetState = (x_input_set_state*)GetProcAddress(xinputModule, "XInputSetState");
+//     }
+//     else
+//     {
+//         OutputDebugStringA("Failed to load xinput1_4.dll\n");
+    
+//     }
+// }
+#pragma endregion xInput stubs old style
+
+#pragma region XInput stubs new style
+namespace Input
+{
+    using XInputGetStateFunc = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
+    using XInputSetStateFunc = DWORD(WINAPI*)(DWORD, XINPUT_VIBRATION*);
+
+    auto XInputGetStateStub(DWORD, XINPUT_STATE*) -> DWORD { 
+        return ERROR_DEVICE_NOT_CONNECTED; 
+    }
+
+    auto XInputSetStateStub(DWORD, XINPUT_VIBRATION*) -> DWORD { 
+        return ERROR_DEVICE_NOT_CONNECTED; 
+    }
+
+    inline XInputGetStateFunc XInputGetState = XInputGetStateStub;
+    inline XInputSetStateFunc XInputSetState = XInputSetStateStub;
+
+    auto LoadInputLibrary() -> bool {
+        auto module = LoadLibraryA("xinput1_4.dll");
+        if (!module) return false;
+
+        if (auto proc = GetProcAddress(module, "XInputGetState")) {
+            XInputGetState = reinterpret_cast<XInputGetStateFunc>(proc);
+        }
+
+        if (auto proc = GetProcAddress(module, "XInputSetState")) {
+            XInputSetState = reinterpret_cast<XInputSetStateFunc>(proc);
+        }
+
+        return true;
+    }
+
+} // namespace Input
+
+
+#pragma endregion XInput stubs new style
 
 struct Dimensions
 {
@@ -153,6 +228,48 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
            
                 
         }break;
+        case WM_SYSKEYDOWN:
+        case WM_SYSKEYUP:
+        case WM_KEYDOWN:
+        case WM_KEYUP:
+        {
+            uint32_t key = (uint32_t)wParam;
+            bool isDown = (lParam & (1 << 31)) == 0; // Check if the high bit is not set
+            bool wasDown = (lParam & (1 << 30)) != 0; // Check if the second high bit is set
+
+            if (isDown)
+            {
+                if (key == VK_ESCAPE)
+                {
+                    // Handle escape key to close the application
+                    running = false;
+                }
+                
+                // Key is pressed
+                std::string keyName = "Key Pressed: " + std::to_string(key) + "\n";
+                std::cout << keyName;
+
+                if (wasDown)
+                {
+                    // Key was already down, this is a repeat
+                    std::cout << "Key Repeat: " + std::to_string(key) + "\n";
+                }
+                else
+                {
+                    // Key was just pressed
+                    std::cout << "Key Just Pressed: " + std::to_string(key) + "\n";
+                }
+            }
+            else
+            {
+                // Key is released
+                std::string keyName = "Key Released: " + std::to_string(key) + "\n";
+                std::cout << keyName;
+            }
+
+
+        }break;
+        
         case WM_PAINT:
         {
             PAINTSTRUCT ps;
@@ -176,6 +293,12 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
 
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
+    if(!Input::LoadInputLibrary())
+    {
+        MessageBoxA(nullptr, "Failed to load xinput1_4.dll", "Error", MB_OK | MB_ICONERROR);
+        return -1;
+    }
+
     //Initialize the back buffer
     ResizeDIBSection(&backBuffer,800, 600);
 
@@ -212,6 +335,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     }
 
     int xOffset = 0;
+    int yOffset = 0;
     MSG msg{};
     while (running)
     {
@@ -224,13 +348,93 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
                 running = false;
         }
 
-        RenderGradiant(backBuffer,xOffset, 0);
+
+
+        //TODO: should we poll more friquently 
+
+        for (DWORD cIndex = 0; cIndex < XUSER_MAX_COUNT; ++cIndex)
+        {
+            XINPUT_STATE state;
+            if(Input::XInputGetState(cIndex, &state) == ERROR_SUCCESS)
+            {
+                //TODO: See if state.dwPacketNumber is increment too rapidly
+
+                auto& gamepad = state.Gamepad;
+                //Process gamepad input
+                bool Up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
+                bool Down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
+                bool Left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+                bool Right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
+                bool Start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+                bool Back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+                bool A = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
+                bool B = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
+                bool X = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
+                bool Y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
+                float LeftTrigger = gamepad.bLeftTrigger / 255.0f; // Normalize to [0, 1]
+                float RightTrigger = gamepad.bRightTrigger / 255.0f; // Normalize to [0, 1]
+                float LeftThumbX = gamepad.sThumbLX / 32767.0f; // Normalize to [-1, 1]
+                float LeftThumbY = gamepad.sThumbLY / 32767.0f; // Normalize to [-1, 1]
+                float RightThumbX = gamepad.sThumbRX / 32767.0f; // Normalize to [-1, 1]
+                float RightThumbY = gamepad.sThumbRY / 32767.0f; // Normalize to [-1, 1]
+
+                //Debug output for gamepad state
+                std::string debugOutput = "Gamepad " + std::to_string(cIndex) + " State:\n";
+                debugOutput += "Up: " + std::to_string(Up) + "\n";
+                debugOutput += "Down: " + std::to_string(Down) + "\n";
+                debugOutput += "Left: " + std::to_string(Left) + "\n";
+                debugOutput += "Right: " + std::to_string(Right) + "\n";
+                debugOutput += "Start: " + std::to_string(Start) + "\n";
+                debugOutput += "Back: " + std::to_string(Back) + "\n";
+                debugOutput += "A: " + std::to_string(A) + "\n";
+                debugOutput += "B: " + std::to_string(B) + "\n";
+                debugOutput += "X: " + std::to_string(X) + "\n";
+                debugOutput += "Y: " + std::to_string(Y) + "\n";
+                debugOutput += "Left Trigger: " + std::to_string(LeftTrigger) + "\n";
+                debugOutput += "Right Trigger: " + std::to_string(RightTrigger) + "\n";
+                debugOutput += "Left Thumb X: " + std::to_string(LeftThumbX) + "\n";
+                debugOutput += "Left Thumb Y: " + std::to_string(LeftThumbY) + "\n";
+                debugOutput += "Right Thumb X: " + std::to_string(RightThumbX) + "\n";
+                debugOutput += "Right Thumb Y: " + std::to_string(RightThumbY) + "\n";
+                OutputDebugStringA(debugOutput.c_str());
+
+               if (Up)
+               {
+                   yOffset -= 1;
+               }
+               if (Down)
+               {
+                   yOffset += 1;
+               }
+               if (Left)
+               {
+                   xOffset -= 1;
+               }
+               if (Right)
+               {
+                   xOffset += 1;
+               }
+               
+
+
+            }
+            else
+            {
+                //Controller is not connected
+            }
+        }
+
+        // XINPUT_VIBRATION vibration = {};
+        // vibration.wLeftMotorSpeed = 3000; // No vibration
+        // vibration.wRightMotorSpeed = 3000; // No vibration
+        // XInputSetState(0, &vibration); // Reset vibration for controller 0
+
+        RenderGradiant(backBuffer,xOffset, yOffset);
         HDC hdc = GetDC(hwnd);
         auto dimensions = GetWindowDimensions(hwnd);
 
         DrawBuffer(hdc, dimensions.width,dimensions.height,backBuffer, 0, 0);
         ReleaseDC(hwnd, hdc);
-        ++xOffset;
        
        
     }

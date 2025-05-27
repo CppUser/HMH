@@ -59,7 +59,7 @@ IF "%config%"=="release" set defines=-DRELEASE -D_CRT_SECURE_NO_WARNINGS
 REM Fallback
 call :ColorPrint "Blue" "Using enhanced debugging flags..."
 set compilerFlags=-g3 -Wall -Werror -std=c++23 -fstack-protector-all -fno-omit-frame-pointer -O0 -ggdb
-set linkerFlags=-luser32 -lgdi32 -ldbghelp
+set linkerFlags=-luser32 -lgdi32 -ldbghelp 
 
 g++ %cppFilenames% %compilerFlags% -o "%outputDir%\%assembly%.exe" %defines% %includeFlags% %linkerFlags%
 
