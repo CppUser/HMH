@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <iostream>
 #include <xinput.h>
-
+#include <dsound.h>
 
 #define global static
 #define local static
@@ -66,8 +66,13 @@ namespace Input
     inline XInputSetStateFunc XInputSetState = XInputSetStateStub;
 
     auto LoadInputLibrary() -> bool {
+    
+
         auto module = LoadLibraryA("xinput1_4.dll");
-        if (!module) return false;
+        if (!module)
+        {
+             module = LoadLibraryA("xinput1_3.dll");
+        }
 
         if (auto proc = GetProcAddress(module, "XInputGetState")) {
             XInputGetState = reinterpret_cast<XInputGetStateFunc>(proc);
@@ -81,9 +86,110 @@ namespace Input
     }
 
 } // namespace Input
+#pragma endregion XInput stubs new style\
+
+auto InitDSound(HWND hwnd, int sampleRate, int channels, int bufferSize) -> bool
+{
+    // Initialize DirectSound
+    HMODULE dsoundModule = LoadLibraryA("dsound.dll");
+    if (!dsoundModule) {
+        OutputDebugStringA("Failed to load dsound.dll\n");
+        return false;
+    }
+
+    typedef HRESULT(WINAPI* DirectSoundCreateFunc)(LPCGUID, LPDIRECTSOUND*, LPUNKNOWN);
+    DirectSoundCreateFunc DirectSoundCreate = (DirectSoundCreateFunc)GetProcAddress(dsoundModule, "DirectSoundCreate");
+
+    if (!DirectSoundCreate) {
+        OutputDebugStringA("Failed to get DirectSoundCreate function\n");
+        return false;
+    }
+
+    // Create DirectSound object
+    LPDIRECTSOUND directSound;
+    HRESULT hr = DirectSoundCreate(nullptr, &directSound, nullptr);
+    if (FAILED(hr)) {
+        OutputDebugStringA("Failed to create DirectSound object\n");
+        return false;
+    }
+
+    // Set the cooperative level
+    // DSSCL_DEFAULT would use the default cooperative level
+    // DSSCL_PRIORITY is often used for games to ensure low latency and high performance
+    // DSSCL_EXCLUSIVE is used for applications that need exclusive access to the sound device
+    // DSSCL_BACKGROUND is used for applications that do not need exclusive access to the sound device
+    // DSSCL_WRITEPRIMARY is used for applications that need to write to the primary buffer
+    // DSSCL_DEFAULT is used for applications that do not need to set a specific cooperative level
+    hr = directSound->SetCooperativeLevel(hwnd, DSSCL_PRIORITY);
+    if (FAILED(hr)) {
+        OutputDebugStringA("Failed to set cooperative level\n");
+        return false;
+    }
+
+    // Create a primary buffer
+    // The primary buffer is used to control the sound device and set the format
+    // It is not used for playing sound directly, but rather to set the format for secondary buffers
+    
+    DSBUFFERDESC bufferDesc = {};
+    bufferDesc.dwSize = sizeof(DSBUFFERDESC); // Size of the structure
+    //bufferDesc.dwFlags = DSBCAPS_CTRLVOLUME | DSBCAPS_CTRLFREQUENCY | DSBCAPS_CTRLPOSITIONNOTIFY; // Flags for the primary buffer
+    bufferDesc.dwFlags = DSBCAPS_PRIMARYBUFFER; 
 
 
-#pragma endregion XInput stubs new style
+    LPDIRECTSOUNDBUFFER primaryBuffer;
+    hr = directSound->CreateSoundBuffer(&bufferDesc, &primaryBuffer, nullptr);
+    if (FAILED(hr)) {
+        OutputDebugStringA("Failed to create primary sound buffer\n");
+        return false;
+    }
+
+    // Set the format of the primary buffer
+    WAVEFORMATEX waveFormat = {};
+    waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+    waveFormat.nChannels = channels;
+    waveFormat.nSamplesPerSec = sampleRate;
+    waveFormat.wBitsPerSample = 16; // 16-bit samples
+    waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample) / 8;
+    waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
+
+    hr = primaryBuffer->SetFormat(&waveFormat);
+    if (FAILED(hr)) {
+        OutputDebugStringA("Failed to set format on primary sound buffer\n");
+        return false;
+    }
+
+    // Create a secondary buffer
+    // The secondary buffer is used for playing sound
+
+    // Secondary buffers are used to play sound
+    // The primary buffer can be created with different flags and formats
+    // DSBCAPS_PRIMARYBUFFER is used to indicate that this is a primary buffer
+    // DSBCAPS_CTRLVOLUME is used to indicate that the buffer can control volume
+    // DSBCAPS_CTRLFREQUENCY is used to indicate that the buffer can control frequency
+    // DSBCAPS_CTRLPOSITIONNOTIFY is used to indicate that the buffer can control position notifications
+    // DSBCAPS_GLOBALFOCUS is used to indicate that the buffer can be used when the application is not in focus
+    // DSBCAPS_GETCURRENTPOSITION2 is used to indicate that the buffer can get the current position
+    // DSBCAPS_CTRL3D is used to indicate that the buffer can control 3D sound
+    // DSBCAPS_CTRLFX is used to indicate that the buffer can control effects
+    // DSBCAPS_CTRLDEFAULT is used to indicate that the buffer can control default settings
+    // DSBCAPS_CTRLALL is used to indicate that the buffer can control all settings
+    DSBUFFERDESC secondaryBufferDesc = {};
+    secondaryBufferDesc.dwSize = sizeof(DSBUFFERDESC); // Size of the structure
+    secondaryBufferDesc.dwFlags = 0; // No special flags for the secondary buffer
+    secondaryBufferDesc.dwBufferBytes = bufferSize; // Size of the buffer in bytes
+    secondaryBufferDesc.lpwfxFormat = &waveFormat; // Format of the buffer
+
+    LPDIRECTSOUNDBUFFER secondaryBuffer;
+    hr = directSound->CreateSoundBuffer(&secondaryBufferDesc, &secondaryBuffer, nullptr);
+    if (FAILED(hr)) {
+        OutputDebugStringA("Failed to create secondary sound buffer\n");
+        return false;
+    }
+
+    return true;
+    //TODO: start it playing sound
+}
+
 
 struct Dimensions
 {
@@ -333,6 +439,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         MessageBoxA(nullptr, "Failed to create window", "Error", MB_OK | MB_ICONERROR);
         return -1;
     }
+
+    InitDSound(hwnd, 44100, 2, 1024); // Initialize DirectSound with sample rate, channels, and buffer size
 
     int xOffset = 0;
     int yOffset = 0;
