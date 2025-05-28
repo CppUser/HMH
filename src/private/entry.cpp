@@ -1,19 +1,14 @@
-#include <Windows.h>
+#include "globals.h"
 #include <string>
-#include <cstdint>
-#include <iostream>
+
 #include <xinput.h>
 #include <dsound.h>
 #include <math.h>
 
-#define global static
-#define local static
-#define internal static
 
-#define M_PI 3.14159265358979323846
 
 global bool running = true;
-static LPDIRECTSOUNDBUFFER secondaryBuffer;
+global LPDIRECTSOUNDBUFFER secondaryBuffer;
 
 
 #pragma region XInput stubs new style
@@ -254,7 +249,6 @@ internal void RenderGradiant(OffscreenBuffer& buffer,int xOffset,int yOffset)
     }
 }
 
-//TODO:internal bool  ResizeDIBSection(OffscreenBuffer* buffer,int width, int height) //would be better choice
 internal void ResizeDIBSection(OffscreenBuffer* buffer,int width, int height)
 {
 
@@ -410,6 +404,14 @@ LRESULT CALLBACK Wndproc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
 
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
+     LARGE_INTEGER frequency;
+    if (!QueryPerformanceFrequency(&frequency))
+    {
+        MessageBoxA(nullptr, "Failed to query performance frequency", "Error", MB_OK | MB_ICONERROR);
+        return -1;
+    }
+
+
     if(!Input::LoadInputLibrary())
     {
         MessageBoxA(nullptr, "Failed to load xinput1_4.dll", "Error", MB_OK | MB_ICONERROR);
@@ -428,6 +430,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     wc.lpszMenuName = nullptr;
     wc.lpszClassName = "hmhWindowClass";
 
+   
     if(!RegisterClassA(&wc))
     {
         MessageBoxA(nullptr, "Failed to register window class", "Error", MB_OK | MB_ICONERROR);
@@ -462,12 +465,16 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     bool SoundIsPlaying = false;
     FillSoundBuffer(soundOutput, 0, soundOutput.secondaryBufferSize);
     secondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // Start playing the sound buffer
-
     
     MSG msg{};
+    
+    LARGE_INTEGER lastCounter;
+    QueryPerformanceCounter(&lastCounter);
+
+    int64_t LastCycleCount = __rdtsc();
+
     while (running)
-    {
-        
+    {        
         while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&msg);
@@ -567,7 +574,25 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         DrawBuffer(hdc, dimensions.width,dimensions.height,backBuffer, 0, 0);
         ReleaseDC(hwnd, hdc);
        
-       
+        int64_t endCycleCount = __rdtsc();
+
+        LARGE_INTEGER endCounter;
+        QueryPerformanceCounter(&endCounter);
+
+        int64_t cyclesElapsed = endCycleCount - LastCycleCount;
+        int64_t elapsedCounter = endCounter.QuadPart - lastCounter.QuadPart;
+        double msPerFrame = (double)(elapsedCounter * 1000) / (double)frequency.QuadPart;
+        double fps = (double)frequency.QuadPart / (double)elapsedCounter;
+
+        if (elapsedCounter > 0) {
+        std::string fpsString = "FPS: " + std::to_string((int)fps) + "\n";
+        std::string msString = "MS: " + std::to_string(msPerFrame) + "\n";
+        std::cout << "Mega Cycles per frame : " << cyclesElapsed  / (1000 * 1000) << "\n";
+        std::cout << msString << fpsString;
+        }
+
+        lastCounter = endCounter;
+        LastCycleCount = endCycleCount;
     }
 
     return 0;
