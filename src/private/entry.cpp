@@ -4,12 +4,12 @@
 #include <xinput.h>
 #include <dsound.h>
 #include <math.h>
-
+#include "game.h"
 
 
 global bool running = true;
 global LPDIRECTSOUNDBUFFER secondaryBuffer;
-
+internal BITMAPINFO bitmapInfo = {}; // Global variable for bitmap info
 
 #pragma region XInput stubs new style
 namespace Input
@@ -213,41 +213,7 @@ internal Dimensions GetWindowDimensions(HWND hwnd)
     return {width, height};
 }
 
-
-struct OffscreenBuffer
-{
-    BITMAPINFO info;
-    void* data;
-    int width,height;
-    int bpp{4};
-    int pitch{0};
-};
 global OffscreenBuffer backBuffer;
-
-
-//NOTE: on previous version i have % 256
-//modulo operator can be slightly slower than bitwise AND for powers of two.
-// Since 256 is a power of two, val % 256 is equivalent to val & 255 (or val & 0xFF).
-//Casting to uint8_t will naturally take the lower 8 bits, which is the same as % 256 
-//for positive results of the sum. This is usually handled efficiently by the compiler anyway
-
-internal void RenderGradiant(OffscreenBuffer& buffer,int xOffset,int yOffset)
-{
-   
-    uint8_t* row = (uint8_t*)buffer.data;
-    for(int y = 0; y < buffer.height; ++y)
-    {
-        uint32_t* pixel = (uint32_t*)row;
-        for(int x = 0; x < buffer.width; ++x)
-        {
-            uint8_t red = (uint8_t)(x + xOffset);
-            uint8_t green = (uint8_t)(y + yOffset);
-            uint8_t blue = (uint8_t)(y + yOffset);
-            *pixel++ = (red << 16) | (green << 8) | blue;
-        }
-        row += buffer.pitch;
-    }
-}
 
 internal void ResizeDIBSection(OffscreenBuffer* buffer,int width, int height)
 {
@@ -260,13 +226,12 @@ internal void ResizeDIBSection(OffscreenBuffer* buffer,int width, int height)
     buffer->width = width;
     buffer->height = height;
     
-
-    buffer->info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    buffer->info.bmiHeader.biWidth = buffer->width;
-    buffer->info.bmiHeader.biHeight = -buffer->height; // negative to flip the image
-    buffer->info.bmiHeader.biPlanes = 1;
-    buffer->info.bmiHeader.biBitCount = 32;
-    buffer->info.bmiHeader.biCompression = BI_RGB;
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = buffer->width;
+    bitmapInfo.bmiHeader.biHeight = -buffer->height; // negative to flip the image
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
 
     int bitmapDataSize = (buffer->width * buffer->height) * buffer->bpp; // 4 bytes per pixel (RGBA)
     buffer->data = VirtualAlloc(nullptr, bitmapDataSize,
@@ -314,7 +279,7 @@ internal void DrawBuffer(HDC hdc,int windowWidth,int windowHeight,OffscreenBuffe
         hdc, 
         0, 0, windowWidth, windowHeight,    // Destination rectangle
         0, 0, buffer.width, buffer.height,  // Source rectangle  
-        buffer.data, &buffer.info, DIB_RGB_COLORS, SRCCOPY);
+        buffer.data, &bitmapInfo, DIB_RGB_COLORS, SRCCOPY);
   
 }
 
@@ -475,6 +440,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     while (running)
     {        
+
+        //TODO: That platform message handling can be moved to platform HandleEvents
+        #pragma region Platform Message Handling
         while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&msg);
@@ -482,11 +450,12 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             if (msg.message == WM_QUIT)
                 running = false;
         }
+        #pragma endregion Platform Message Handling
 
 
 
         //TODO: should we poll more friquently 
-
+#pragma region Input Handling
         for (DWORD cIndex = 0; cIndex < XUSER_MAX_COUNT; ++cIndex)
         {
             XINPUT_STATE state;
@@ -527,8 +496,16 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
                 //Controller is not connected
             }
         }
+#pragma endregion
 
-        RenderGradiant(backBuffer,xOffset, yOffset);
+        OffscreenBuffer buffer = {};
+        buffer.data = backBuffer.data;
+        buffer.width = backBuffer.width;
+        buffer.height = backBuffer.height;
+        buffer.pitch = backBuffer.pitch;
+        buffer.bpp = backBuffer.bpp;
+
+        GameUpdateAndRender(buffer);
 
         DWORD PlayCursor = 0;
         DWORD WriteCursor = 0;
