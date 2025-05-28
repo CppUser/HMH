@@ -4,50 +4,17 @@
 #include <iostream>
 #include <xinput.h>
 #include <dsound.h>
+#include <math.h>
 
 #define global static
 #define local static
 #define internal static
 
+#define M_PI 3.14159265358979323846
+
 global bool running = true;
 static LPDIRECTSOUNDBUFFER secondaryBuffer;
 
-#pragma region XInput stubs old style
-// #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE* pState)
-// typedef X_INPUT_GET_STATE(x_input_get_state);
-// X_INPUT_GET_STATE(XInputGetStateStub)
-// {
-//     return ERROR_DEVICE_NOT_CONNECTED;
-// };
-
-
-// #define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION* pVibration)
-// typedef X_INPUT_SET_STATE(x_input_set_state);
-// X_INPUT_SET_STATE(XInputSetStateStub)
-// {
-//     return ERROR_DEVICE_NOT_CONNECTED;
-// };
-
-// global x_input_get_state* XInputGetState_ = XInputGetStateStub; // Pointer to the XInputGetState function
-// global x_input_set_state* XInputSetState_ = XInputSetStateStub; // Pointer to the XInputSetState function
-// #define XInputGetState XInputGetState_
-// #define XInputSetState XInputSetState_
-
-// internal void LoadInputLibrary()
-// {
-//     HMODULE xinputModule = LoadLibraryA("xinput1_4.dll");
-//     if (xinputModule)
-//     {
-//         XInputGetState = (x_input_get_state*)GetProcAddress(xinputModule, "XInputGetState");
-//         XInputSetState = (x_input_set_state*)GetProcAddress(xinputModule, "XInputSetState");
-//     }
-//     else
-//     {
-//         OutputDebugStringA("Failed to load xinput1_4.dll\n");
-    
-//     }
-// }
-#pragma endregion xInput stubs old style
 
 #pragma region XInput stubs new style
 namespace Input
@@ -186,13 +153,54 @@ auto InitDSound(HWND hwnd, int sampleRate, int channels, int bufferSize) -> bool
         OutputDebugStringA("Failed to create secondary sound buffer\n");
         return false;
     }
-
-
-
     return true;
-    //TODO: start it playing sound
 }
 
+struct SoundOutput{
+
+    int samplesPerSecond = 48000; // Sample rate
+    int toneHz = 256;             // Frequency of the sine wave
+    int16_t toneVolume = 3800;        // Volume (amplitude)
+    uint32_t sampleIndex = 0;         // Current sample index;
+    int WavePeriod = samplesPerSecond/toneHz;
+    int bytesPerSample = sizeof(int16_t) * 2;
+    int secondaryBufferSize = samplesPerSecond * bytesPerSample;
+
+};
+
+internal void FillSoundBuffer(SoundOutput& soundOutput, DWORD ByteToLock, DWORD BytesToWrite)
+{
+    VOID* region1;
+    DWORD region1Size;
+    VOID* region2;
+    DWORD region2Size;
+    if(SUCCEEDED(secondaryBuffer->Lock(ByteToLock, BytesToWrite, &region1, &region1Size, &region2, &region2Size, 0)))
+    {
+        DWORD region1SampleCount = region1Size / soundOutput.bytesPerSample;
+        DWORD region2SampleCount = region2Size / soundOutput.bytesPerSample;
+
+        int16_t* sampleOut = (int16_t*)region1;
+        for(DWORD i = 0; i < region1SampleCount; ++i)
+        {
+            int16_t sampleValue = (int16_t)(sin((double)soundOutput.sampleIndex * 2.0 * M_PI / soundOutput.WavePeriod) * soundOutput.toneVolume);
+            *sampleOut++ = sampleValue; // Left channel
+            *sampleOut++ = sampleValue; // Right channel
+            soundOutput.sampleIndex++;
+        }
+
+        sampleOut = (int16_t*)region2;
+        for(DWORD i = 0; i < region2SampleCount; ++i)
+        {
+            int16_t sampleValue = (int16_t)(sin((double)soundOutput.sampleIndex * 2.0 * M_PI / soundOutput.WavePeriod) * soundOutput.toneVolume);
+            *sampleOut++ = sampleValue; // Left channel
+            *sampleOut++ = sampleValue; // Right channel
+            soundOutput.sampleIndex++;
+        }
+
+        secondaryBuffer->Unlock(region1, region1Size, region2, region2Size);
+    }
+ 
+}
 
 struct Dimensions
 {
@@ -443,18 +451,19 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         return -1;
     }
 
-   
 
     int xOffset = 0;
     int yOffset = 0;
-    int Hz = 256;
-    int SquareWavePeriod = 44100 / Hz; // Calculate the period of the square wave based on the sample rate
-    int BytesPerSample = sizeof(int16_t) * 2; // 16-bit stereo audio (2 channels)
-    uint32_t SampleIndex = 0; // Initialize sample index for audio playback
 
-    InitDSound(hwnd, 44100, 2, 44100*BytesPerSample); // Initialize DirectSound with sample rate, channels, and buffer size
+    SoundOutput soundOutput;
+    if(!InitDSound(hwnd, soundOutput.samplesPerSecond, 2, soundOutput.secondaryBufferSize)){
+        MessageBoxA(nullptr, "Failed to initialize DirectSound", "Error", MB_OK | MB_ICONERROR);
+    }
+    bool SoundIsPlaying = false;
+    FillSoundBuffer(soundOutput, 0, soundOutput.secondaryBufferSize);
+    secondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // Start playing the sound buffer
 
-    secondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
+    
     MSG msg{};
     while (running)
     {
@@ -484,38 +493,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
                 bool Down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
                 bool Left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
                 bool Right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
-                bool Start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
-                bool Back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
-                bool A = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
-                bool B = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
-                bool X = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
-                bool Y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
-                float LeftTrigger = gamepad.bLeftTrigger / 255.0f; // Normalize to [0, 1]
-                float RightTrigger = gamepad.bRightTrigger / 255.0f; // Normalize to [0, 1]
-                float LeftThumbX = gamepad.sThumbLX / 32767.0f; // Normalize to [-1, 1]
-                float LeftThumbY = gamepad.sThumbLY / 32767.0f; // Normalize to [-1, 1]
-                float RightThumbX = gamepad.sThumbRX / 32767.0f; // Normalize to [-1, 1]
-                float RightThumbY = gamepad.sThumbRY / 32767.0f; // Normalize to [-1, 1]
-
-                //Debug output for gamepad state
-                std::string debugOutput = "Gamepad " + std::to_string(cIndex) + " State:\n";
-                debugOutput += "Up: " + std::to_string(Up) + "\n";
-                debugOutput += "Down: " + std::to_string(Down) + "\n";
-                debugOutput += "Left: " + std::to_string(Left) + "\n";
-                debugOutput += "Right: " + std::to_string(Right) + "\n";
-                debugOutput += "Start: " + std::to_string(Start) + "\n";
-                debugOutput += "Back: " + std::to_string(Back) + "\n";
-                debugOutput += "A: " + std::to_string(A) + "\n";
-                debugOutput += "B: " + std::to_string(B) + "\n";
-                debugOutput += "X: " + std::to_string(X) + "\n";
-                debugOutput += "Y: " + std::to_string(Y) + "\n";
-                debugOutput += "Left Trigger: " + std::to_string(LeftTrigger) + "\n";
-                debugOutput += "Right Trigger: " + std::to_string(RightTrigger) + "\n";
-                debugOutput += "Left Thumb X: " + std::to_string(LeftThumbX) + "\n";
-                debugOutput += "Left Thumb Y: " + std::to_string(LeftThumbY) + "\n";
-                debugOutput += "Right Thumb X: " + std::to_string(RightThumbX) + "\n";
-                debugOutput += "Right Thumb Y: " + std::to_string(RightThumbY) + "\n";
-                OutputDebugStringA(debugOutput.c_str());
+                
 
                if (Up)
                {
@@ -543,96 +521,45 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             }
         }
 
-        // XINPUT_VIBRATION vibration = {};
-        // vibration.wLeftMotorSpeed = 3000; // No vibration
-        // vibration.wRightMotorSpeed = 3000; // No vibration
-        // XInputSetState(0, &vibration); // Reset vibration for controller 0
-
         RenderGradiant(backBuffer,xOffset, yOffset);
 
-        //NOTE: Direct sound output test
-        //Circular buffer output
-        if (secondaryBuffer)
+        DWORD PlayCursor = 0;
+        DWORD WriteCursor = 0;
+        if(SUCCEEDED(secondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
         {
-            DWORD PlayCursor, WriteCursor;
-            HRESULT hr = secondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor);
-            if (FAILED(hr))
-            {
-                OutputDebugStringA("Failed to get current position of secondary buffer\n");
-                continue; // Skip this iteration if we can't get the position
-            }
-
-            DWORD BytesToLock = SampleIndex * BytesPerSample % (44100 * BytesPerSample);
+            DWORD ByteToLock = (soundOutput.sampleIndex * soundOutput.bytesPerSample) % soundOutput.secondaryBufferSize;
             DWORD BytesToWrite;
-
-            if (BytesToLock > PlayCursor)
+            if(ByteToLock == PlayCursor)
             {
-                BytesToWrite = (44100 * BytesPerSample) - BytesToLock;
+                BytesToWrite = 0;
+            }
+            else if (BytesToWrite > PlayCursor)
+            {
+                BytesToWrite = (soundOutput.secondaryBufferSize - ByteToLock);
                 BytesToWrite += PlayCursor;
             }
             else
             {
-                BytesToWrite = PlayCursor - BytesToLock;
+                BytesToWrite = PlayCursor - ByteToLock;
             }
-
-            void* Region1;
-            DWORD Region1Size;
-            void* Region2;
-            DWORD Region2Size;
-
-            hr = secondaryBuffer->Lock(BytesToLock, BytesToWrite,
-                                       &Region1, &Region1Size,
-                                       &Region2, &Region2Size,
-                                       0);
-            
+            FillSoundBuffer(soundOutput, ByteToLock, BytesToWrite);
+        }
+        
+        if (!SoundIsPlaying)
+        {
+            HRESULT hr = secondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
             if (SUCCEEDED(hr))
             {
-                // Process Region 1
-                int16_t* pData1 = (int16_t*)Region1;
-                DWORD Region1SampleCount = Region1Size / BytesPerSample;
-
-                for (DWORD index = 0; index < Region1SampleCount; ++index)
-                {
-                    // Generate square wave: alternate between high and low every half period
-                    int16_t SampleValue = ((SampleIndex / (SquareWavePeriod / 2)) % 2) ? 16000 : -16000;
-                    *pData1++ = SampleValue; // Left channel
-                    *pData1++ = SampleValue; // Right channel
-                    SampleIndex++;
-                }
-
-                // Process Region 2 (if it exists)
-                if (Region2 && Region2Size > 0)
-                {
-                    int16_t* pData2 = (int16_t*)Region2;
-                    DWORD Region2SampleCount = Region2Size / BytesPerSample;
-
-                    for (DWORD index = 0; index < Region2SampleCount; ++index)
-                    {
-                        int16_t SampleValue = ((SampleIndex / (SquareWavePeriod / 2)) % 2) ? 16000 : -16000;
-                        *pData2++ = SampleValue; // Left channel
-                        *pData2++ = SampleValue; // Right channel
-                        SampleIndex++;
-                    }
-                }
-
-                // Unlock the buffer
-                secondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
-
-                // Start playing if not already playing
-                DWORD status;
-                if (SUCCEEDED(secondaryBuffer->GetStatus(&status)))
-                {
-                    if (!(status & DSBSTATUS_PLAYING))
-                    {
-                        
-                    }
-                }
+                SoundIsPlaying = true;
             }
             else
             {
-                OutputDebugStringA("Failed to lock DirectSound buffer\n");
+                OutputDebugStringA("Failed to play sound buffer\n");
             }
         }
+        
+
+       
 
         HDC hdc = GetDC(hwnd);
         auto dimensions = GetWindowDimensions(hwnd);

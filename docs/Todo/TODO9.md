@@ -1,0 +1,1 @@
+ //TODO: There is a bug when resizing dib section sound is cracking . i.e. reseting
