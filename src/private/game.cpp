@@ -1,7 +1,25 @@
 #include "game.h"
+#include <math.h>
 
 
 
+void GameOutputSound(SoundOutputBuffer& buffer,int toneHz)
+{
+    local float tSine;
+    int16_t ToneVolume = 3000;
+    int WavePeriod = buffer.samplesPerSecond / toneHz;
+
+    int16_t* SampleOut = buffer.samples;
+    for(int i = 0; i < buffer.sampleCount; ++i)
+    {
+        float SineValue = sinf(tSine);
+        int16_t SampleValue = (int16_t)(SineValue * ToneVolume);
+        *SampleOut++ = SampleValue;
+        *SampleOut++ = SampleValue;
+
+        tSine += 2.0f * M_PI * 1.0f / (float)WavePeriod;
+    }
+}
 
 internal void RenderGradiant(OffscreenBuffer& buffer,int xOffset,int yOffset)
 {
@@ -22,6 +40,9 @@ internal void RenderGradiant(OffscreenBuffer& buffer,int xOffset,int yOffset)
 }
 
 
-void GameUpdateAndRender(OffscreenBuffer& buffer){
+void GameUpdateAndRender(OffscreenBuffer& buffer,SoundOutputBuffer& soundBuffer, int toneHz)
+{
+    //TODO: Allow sample offsets for more robust platform options
+    GameOutputSound(soundBuffer,toneHz);
     RenderGradiant(buffer, 0, 0);
 }

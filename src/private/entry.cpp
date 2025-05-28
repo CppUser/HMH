@@ -5,7 +5,7 @@
 #include <dsound.h>
 #include <math.h>
 #include "game.h"
-
+#include <stdio.h>
 
 global bool running = true;
 global LPDIRECTSOUNDBUFFER secondaryBuffer;
@@ -160,11 +160,17 @@ struct SoundOutput{
     int WavePeriod = samplesPerSecond/toneHz;
     int bytesPerSample = sizeof(int16_t) * 2;
     int secondaryBufferSize = samplesPerSecond * bytesPerSample;
+    int latencySampleCount = samplesPerSecond / 15;
 
 };
 
-internal void FillSoundBuffer(SoundOutput& soundOutput, DWORD ByteToLock, DWORD BytesToWrite)
+internal void FillSoundBuffer(SoundOutput& soundOutput, DWORD ByteToLock, DWORD BytesToWrite,SoundOutputBuffer& source)
 {
+
+    if (!running || !secondaryBuffer || !source.samples) {
+        return;  // Don't fill buffer if shutting down
+    }
+
     VOID* region1;
     DWORD region1Size;
     VOID* region2;
@@ -173,28 +179,57 @@ internal void FillSoundBuffer(SoundOutput& soundOutput, DWORD ByteToLock, DWORD 
     {
         DWORD region1SampleCount = region1Size / soundOutput.bytesPerSample;
         DWORD region2SampleCount = region2Size / soundOutput.bytesPerSample;
+        DWORD totalSampleCount = region1SampleCount + region2SampleCount;
 
-        int16_t* sampleOut = (int16_t*)region1;
-        for(DWORD i = 0; i < region1SampleCount; ++i)
-        {
-            int16_t sampleValue = (int16_t)(sin((double)soundOutput.sampleIndex * 2.0 * M_PI / soundOutput.WavePeriod) * soundOutput.toneVolume);
-            *sampleOut++ = sampleValue; // Left channel
-            *sampleOut++ = sampleValue; // Right channel
-            soundOutput.sampleIndex++;
-        }
+        int16_t* destSample = (int16_t*)region1;
+        int16_t* sourceSample = source.samples;
 
-        sampleOut = (int16_t*)region2;
-        for(DWORD i = 0; i < region2SampleCount; ++i)
+        for(DWORD i = 0; i < totalSampleCount; ++i)
         {
-            int16_t sampleValue = (int16_t)(sin((double)soundOutput.sampleIndex * 2.0 * M_PI / soundOutput.WavePeriod) * soundOutput.toneVolume);
-            *sampleOut++ = sampleValue; // Left channel
-            *sampleOut++ = sampleValue; // Right channel
+            // Switch to region2 when we've filled region1
+            if(i == region1SampleCount)
+            {
+                destSample = (int16_t*)region2;
+            }
+            
+            *destSample++ = *sourceSample++; // Left channel
+            *destSample++ = *sourceSample++; // Right channel
             soundOutput.sampleIndex++;
         }
 
         secondaryBuffer->Unlock(region1, region1Size, region2, region2Size);
     }
  
+}
+
+internal void ClearSoundBuffer(SoundOutput& soundOutput)
+{
+    VOID* region1;
+    DWORD region1Size;
+    VOID* region2;
+    DWORD region2Size;
+    if(SUCCEEDED(secondaryBuffer->Lock(0, soundOutput.secondaryBufferSize, &region1, &region1Size, &region2, &region2Size, 0)))
+    {
+        DWORD region1SampleCount = region1Size / soundOutput.bytesPerSample;
+        DWORD region2SampleCount = region2Size / soundOutput.bytesPerSample;
+        DWORD totalSampleCount = region1SampleCount + region2SampleCount;
+
+        int16_t* destSample = (int16_t*)region1;
+
+        for(DWORD i = 0; i < totalSampleCount; ++i)
+        {
+            // Switch to region2 when we've filled region1
+            if(i == region1SampleCount)
+            {
+                destSample = (int16_t*)region2;
+            }
+            
+            *destSample++ = 0; // Left channel
+            *destSample++ = 0; // Right channel
+        }
+
+        secondaryBuffer->Unlock(region1, region1Size, region2, region2Size);
+    }
 }
 
 struct Dimensions
@@ -428,15 +463,19 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         MessageBoxA(nullptr, "Failed to initialize DirectSound", "Error", MB_OK | MB_ICONERROR);
     }
     bool SoundIsPlaying = false;
-    FillSoundBuffer(soundOutput, 0, soundOutput.secondaryBufferSize);
-    secondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // Start playing the sound buffer
+    ClearSoundBuffer(soundOutput);
     
+    int16_t* samples = (int16_t*)VirtualAlloc(nullptr, soundOutput.secondaryBufferSize,
+                              MEM_COMMIT | MEM_RESERVE,
+                              PAGE_READWRITE);
+
+    secondaryBuffer->Play(0, 0, DSBPLAY_LOOPING); // Start playing the sound buffer
     MSG msg{};
     
     LARGE_INTEGER lastCounter;
     QueryPerformanceCounter(&lastCounter);
 
-    int64_t LastCycleCount = __rdtsc();
+    //int64_t LastCycleCount = __rdtsc();
 
     while (running)
     {        
@@ -465,29 +504,19 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
                 auto& gamepad = state.Gamepad;
                 //Process gamepad input
-                bool Up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
-                bool Down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
-                bool Left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
-                bool Right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
-                
+                // bool Up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
+                // bool Down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
+                // bool Left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+                // bool Right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
 
-               if (Up)
-               {
-                   yOffset -= 1;
-               }
-               if (Down)
-               {
-                   yOffset += 1;
-               }
-               if (Left)
-               {
-                   xOffset -= 1;
-               }
-               if (Right)
-               {
-                   xOffset += 1;
-               }
-               
+                int16_t StickX = gamepad.sThumbLX;
+                int16_t StickY = gamepad.sThumbLY;
+
+                xOffset += StickX / 4096;
+                yOffset += StickY / 4096;
+
+                soundOutput.toneHz = 512 + (int)(256.0f*(float)StickY / 30000.0f);
+                soundOutput.WavePeriod = soundOutput.samplesPerSecond/soundOutput.toneHz;
 
 
             }
@@ -498,6 +527,38 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         }
 #pragma endregion
 
+        DWORD PlayCursor = 0;
+        DWORD WriteCursor = 0;
+        DWORD ByteToLock;
+        DWORD TargetCursor;
+        DWORD BytesToWrite;
+        bool SoundIsValid = false;
+        if(SUCCEEDED(secondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
+        {
+            ByteToLock = (soundOutput.sampleIndex * soundOutput.bytesPerSample) % soundOutput.secondaryBufferSize;
+
+            TargetCursor = ((PlayCursor + (soundOutput.latencySampleCount*soundOutput.bytesPerSample)) % soundOutput.secondaryBufferSize);
+            
+            if (ByteToLock > TargetCursor)
+            {
+                BytesToWrite = (soundOutput.secondaryBufferSize - ByteToLock);
+                BytesToWrite += TargetCursor;
+            }
+            else
+            {
+                BytesToWrite = TargetCursor - ByteToLock;
+            }
+
+            SoundIsValid = true;
+        }
+
+        
+        SoundOutputBuffer soundBuffer;
+        soundBuffer.samplesPerSecond = soundOutput.samplesPerSecond;
+        soundBuffer.sampleCount = BytesToWrite/ soundOutput.bytesPerSample; //for 30 fps
+        soundBuffer.samples = samples;
+
+
         OffscreenBuffer buffer = {};
         buffer.data = backBuffer.data;
         buffer.width = backBuffer.width;
@@ -505,28 +566,12 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         buffer.pitch = backBuffer.pitch;
         buffer.bpp = backBuffer.bpp;
 
-        GameUpdateAndRender(buffer);
+        GameUpdateAndRender(buffer,soundBuffer,soundOutput.toneHz);
 
-        DWORD PlayCursor = 0;
-        DWORD WriteCursor = 0;
-        if(SUCCEEDED(secondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
+        if(SoundIsValid)
         {
-            DWORD ByteToLock = (soundOutput.sampleIndex * soundOutput.bytesPerSample) % soundOutput.secondaryBufferSize;
-            DWORD BytesToWrite;
-            if(ByteToLock == PlayCursor)
-            {
-                BytesToWrite = 0;
-            }
-            else if (BytesToWrite > PlayCursor)
-            {
-                BytesToWrite = (soundOutput.secondaryBufferSize - ByteToLock);
-                BytesToWrite += PlayCursor;
-            }
-            else
-            {
-                BytesToWrite = PlayCursor - ByteToLock;
-            }
-            FillSoundBuffer(soundOutput, ByteToLock, BytesToWrite);
+            
+            FillSoundBuffer(soundOutput, ByteToLock, BytesToWrite, soundBuffer);
         }
         
         if (!SoundIsPlaying)
@@ -551,25 +596,20 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         DrawBuffer(hdc, dimensions.width,dimensions.height,backBuffer, 0, 0);
         ReleaseDC(hwnd, hdc);
        
-        int64_t endCycleCount = __rdtsc();
+        //int64_t endCycleCount = __rdtsc();
 
         LARGE_INTEGER endCounter;
         QueryPerformanceCounter(&endCounter);
 
-        int64_t cyclesElapsed = endCycleCount - LastCycleCount;
-        int64_t elapsedCounter = endCounter.QuadPart - lastCounter.QuadPart;
-        double msPerFrame = (double)(elapsedCounter * 1000) / (double)frequency.QuadPart;
-        double fps = (double)frequency.QuadPart / (double)elapsedCounter;
+        //int64_t cyclesElapsed = endCycleCount - LastCycleCount;
+        //int64_t elapsedCounter = endCounter.QuadPart - lastCounter.QuadPart;
+        //double msPerFrame = (double)(elapsedCounter * 1000) / (double)frequency.QuadPart;
+        //double fps = (double)frequency.QuadPart / (double)elapsedCounter;
 
-        if (elapsedCounter > 0) {
-        std::string fpsString = "FPS: " + std::to_string((int)fps) + "\n";
-        std::string msString = "MS: " + std::to_string(msPerFrame) + "\n";
-        std::cout << "Mega Cycles per frame : " << cyclesElapsed  / (1000 * 1000) << "\n";
-        std::cout << msString << fpsString;
-        }
+       
 
-        lastCounter = endCounter;
-        LastCycleCount = endCycleCount;
+        //lastCounter = endCounter;
+        //LastCycleCount = endCycleCount;
     }
 
     return 0;

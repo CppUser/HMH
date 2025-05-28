@@ -1,0 +1,1 @@
+### There is bug cracking sound , issue probebly with sound buffer 
